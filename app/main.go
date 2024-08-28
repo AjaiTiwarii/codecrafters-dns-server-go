@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net"
+	"encoding/binary"
 )
 
 // Ensures gofmt doesn't remove the "net" import in stage 1 (feel free to remove this!)
@@ -40,7 +41,13 @@ func main() {
 		fmt.Printf("Received %d bytes from %s: %s\n", size, source, receivedData)
 	
 		// Create an empty response
-		response := []byte{}
+		// response := []byte{}
+		
+		// header section for the message
+		response := make([]byte, 12)
+		binary.BigEndian.PutUint16(response[0:2], 1234) // setting packet identifier to 1234
+		response[2] = 1 << 7 // setting the QR indicator to 1
+
 	
 		_, err = udpConn.WriteToUDP(response, source)
 		if err != nil {
