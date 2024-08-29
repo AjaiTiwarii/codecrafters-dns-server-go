@@ -1,9 +1,12 @@
 package main
 
 import (
+	
 	"fmt"
 	"net"
-	"encoding/binary"
+
+	"github.com/codecrafters-io/dns-server-starter-go/app/dns"
+
 )
 
 // Ensures gofmt doesn't remove the "net" import in stage 1 (feel free to remove this!)
@@ -43,27 +46,11 @@ func main() {
 		// Create an empty response
 		// response := []byte{}
 		
-		// header section for the message
-		response := make([]byte, 12)
-		binary.BigEndian.PutUint16(response[0:2], 1234) // setting packet identifier to 1234
-		response[2] = 1 << 7 // setting the QR indicator to 1
+		message := dns.PrepareMessage()
 
-		response[5] = 1                                 // QDCOUNT = 1 (1 question)
-
-        // Construct the question section
-        question := []byte{
-            0x0c, 'c', 'o', 'd', 'e', 'c', 'r', 'a', 'f', 't', 'e', 'r', 's', // codecrafters (length + label)
-            0x02, 'i', 'o', // io (length + label)
-            0x00,           // null byte to terminate the domain name
-        }
-
-        // Append Type (A record) and Class (IN) to the question
-        question = append(question, []byte{0x00, 0x01}...) // Type: A (1)
-        question = append(question, []byte{0x00, 0x01}...) // Class: IN (1)
-
-        // Combine header and question sections
-        response = append(response, question...)
-
+		response := []byte{}
+		response = append(response, (*message).Header...)
+		response = append(response, (*message).Question...)
 	
 		_, err = udpConn.WriteToUDP(response, source)
 		if err != nil {
