@@ -1,22 +1,14 @@
 package dns
 
-import (
-	"encoding/binary"
-	"strings"
-)
+import "encoding/binary"
 
 type Message struct {
 	Header   []byte
 	Question []byte
 	Answer   []byte
+	RD       uint16
+	Opcode   uint16
 	ID       uint16
-	QR       uint8
-	OPCODE   uint8
-	RD       uint8
-	RCODE    uint8
-	QName    string
-	QType    uint16
-	QClass   uint16
 }
 
 func NewMessage() *Message {
@@ -27,99 +19,83 @@ func NewMessage() *Message {
 	}
 }
 
-func ParseMessage(data []byte) *Message {
+func ParseMessage(request []byte) *Message {
 	message := NewMessage()
+	message.ID = binary.BigEndian.Uint16(request[0:2])
 
-	message.ID = binary.BigEndian.Uint16(data[0:2])
-	message.QR = data[2] >> 7
-	message.OPCODE = (data[2] >> 3) & 0xF
-	message.RD = (data[2] >> 1) & 0x1
-
-	qdCount := binary.BigEndian.Uint16(data[4:6])
-
-	if qdCount > 0 {
-		offset := 12
-		message.QName, offset = parseQName(data, offset)
-		message.QType = binary.BigEndian.Uint16(data[offset : offset+2])
-		message.QClass = binary.BigEndian.Uint16(data[offset+2 : offset+4])
-		message.Question = data[12 : offset+4]
+	// Extract flags
+	flags := binary.BigEndian.Uint16(request[2:4])
+	if((flags & (1 << 8)) != 0){
+		message.RD = 1
+	}else{
+		message.RD = 0
 	}
+	message.Opcode = (flags >> 11) & 0xF
 
-	if message.OPCODE == 0 {
-		message.RCODE = 0
-	} else {
-		message.RCODE = 4
+	// Copy the question section
+	qdCount := binary.BigEndian.Uint16(request[4:6])
+	offset := 12
+	if qdCount > 0 {
+		for i := 0; i < int(qdCount); i++ {
+			// Assuming only one question section and copying it directly
+			nameEnd := offset
+			for request[nameEnd] != 0 {
+				nameEnd++
+			}
+			nameEnd++ // Include the null byte
+
+			message.Question = append(message.Question, request[offset:nameEnd]...)
+			message.Question = binary.BigEndian.AppendUint16(message.Question, 1) // Type A
+			message.Question = binary.BigEndian.AppendUint16(message.Question, 1) // Class IN
+			offset = nameEnd + 4
+		}
 	}
 
 	return message
 }
 
-func parseQName(data []byte, offset int) (string, int) {
-	name := ""
-	for {
-		length := int(data[offset])
-		if length == 0 {
-			break
-		}
-		if len(name) > 0 {
-			name += "."
-		}
-		name += string(data[offset+1 : offset+1+length])
-		offset += length + 1
-	}
-	return name, offset + 1
-}
+func PrepareMessage(request *Message) []byte {
+	response := NewMessage()
+	response.ID = request.ID
+	response.RD = request.RD
+	response.Opcode = request.Opcode
 
-func PrepareMessage(req *Message) []byte {
-	resp := NewMessage()
+	response.SetHeader()
+	response.SetQuestion(request.Question)
+	response.SetAnswer(request.Question)
 
-	resp.ID = req.ID
-	resp.QR = 1
-	resp.OPCODE = req.OPCODE
-	resp.RD = req.RD
-	resp.RCODE = req.RCODE
-
-	resp.SetHeader()
-	resp.Question = req.Question
-	resp.SetAnswer(req.QName)
-
-	response := []byte{}
-	response = append(response, resp.Header...)
-	response = append(response, resp.Question...)
-	response = append(response, resp.Answer...)
-
-	return response
+	return append(response.Header, append(response.Question, response.Answer...)...)
 }
 
 func (m *Message) SetHeader() {
 	binary.BigEndian.PutUint16(m.Header[0:2], m.ID)
-	m.Header[2] = m.QR<<7 | m.OPCODE<<3 | m.RD<<1
-	m.Header[3] = m.RCODE
-	binary.BigEndian.PutUint16(m.Header[4:6], 1) // QDCOUNT
-	binary.BigEndian.PutUint16(m.Header[6:8], 1) // ANCOUNT
-	binary.BigEndian.PutUint16(m.Header[8:10], 0)
-	binary.BigEndian.PutUint16(m.Header[10:12], 0)
+
+	flags := combineFlags(1, m.Opcode, 0, 0, m.RD, 0, 0, 0)
+	binary.BigEndian.PutUint16(m.Header[2:4], flags)
+
+	binary.BigEndian.PutUint16(m.Header[4:6], 1) // QDCOUNT: 1 question
+	binary.BigEndian.PutUint16(m.Header[6:8], 1) // ANCOUNT: 1 answer
+	binary.BigEndian.PutUint16(m.Header[8:10], 0) // NSCOUNT
+	binary.BigEndian.PutUint16(m.Header[10:12], 0) // ARCOUNT
 }
 
-func (m *Message) SetAnswer(qname string) {
+func (m *Message) SetQuestion(question []byte) {
+	m.Question = question
+}
+
+func (m *Message) SetAnswer(question []byte) {
 	answer := []byte{}
-	answer = append(answer, encodeQName(qname)...)
-	answer = binary.BigEndian.AppendUint16(answer, 1)       // Type A
-	answer = binary.BigEndian.AppendUint16(answer, 1)       // Class IN
-	answer = binary.BigEndian.AppendUint32(answer, 60)      // TTL 60 seconds
-	answer = binary.BigEndian.AppendUint16(answer, 4)       // Length
-	answer = binary.BigEndian.AppendUint32(answer, 0x08080808) // IP 8.8.8.8
+	answer = append(answer, question...)
+
+	answer = binary.BigEndian.AppendUint16(answer, 1) // Type A
+	answer = binary.BigEndian.AppendUint16(answer, 1) // Class IN
+	answer = binary.BigEndian.AppendUint32(answer, 60) // TTL: 60 seconds
+	answer = binary.BigEndian.AppendUint16(answer, 4)  // RDLENGTH: 4 bytes
+	answer = binary.BigEndian.AppendUint32(answer, binary.BigEndian.Uint32([]byte("\x08\x08\x08\x08"))) // RDATA: 8.8.8.8
 
 	m.Answer = answer
 }
 
-func encodeQName(qname string) []byte {
-	encoded := []byte{}
-	parts := strings.Split(qname, ".")
-	for _, part := range parts {
-		encoded = append(encoded, byte(len(part)))
-		encoded = append(encoded, []byte(part)...)
-	}
-	encoded = append(encoded, 0)
-	return encoded
+func combineFlags(qr, opcode, aa, tc, rd, ra, z, rcode uint16) uint16 {
+	return uint16(qr<<15 | opcode<<11 | aa<<10 | tc<<9 | rd<<8 | ra<<7 | z<<4 | rcode)
 }
