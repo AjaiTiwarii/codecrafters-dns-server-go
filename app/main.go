@@ -48,6 +48,22 @@ func main() {
 		binary.BigEndian.PutUint16(response[0:2], 1234) // setting packet identifier to 1234
 		response[2] = 1 << 7 // setting the QR indicator to 1
 
+		response[5] = 1                                 // QDCOUNT = 1 (1 question)
+
+        // Construct the question section
+        question := []byte{
+            0x0c, 'c', 'o', 'd', 'e', 'c', 'r', 'a', 'f', 't', 'e', 'r', 's', // codecrafters (length + label)
+            0x02, 'i', 'o', // io (length + label)
+            0x00,           // null byte to terminate the domain name
+        }
+
+        // Append Type (A record) and Class (IN) to the question
+        question = append(question, []byte{0x00, 0x01}...) // Type: A (1)
+        question = append(question, []byte{0x00, 0x01}...) // Class: IN (1)
+
+        // Combine header and question sections
+        response = append(response, question...)
+
 	
 		_, err = udpConn.WriteToUDP(response, source)
 		if err != nil {
