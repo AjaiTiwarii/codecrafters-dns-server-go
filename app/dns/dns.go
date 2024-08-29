@@ -9,6 +9,7 @@ type Message struct {
 	RD       uint16
 	Opcode   uint16
 	ID       uint16
+	Rcode    uint16
 }
 
 func NewMessage() *Message {
@@ -31,6 +32,13 @@ func ParseMessage(request []byte) *Message {
 		message.RD = 0
 	}
 	message.Opcode = (flags >> 11) & 0xF
+
+	// Determine Rcode based on Opcode
+	if message.Opcode == 0 {
+		message.Rcode = 0 // No error for standard query
+	} else {
+		message.Rcode = 4 // Not implemented for other Opcodes
+	}
 
 	// Copy the question section
 	qdCount := binary.BigEndian.Uint16(request[4:6])
@@ -59,6 +67,7 @@ func PrepareMessage(request *Message) []byte {
 	response.ID = request.ID
 	response.RD = request.RD
 	response.Opcode = request.Opcode
+	response.Rcode = request.Rcode
 
 	response.SetHeader()
 	response.SetQuestion(request.Question)
