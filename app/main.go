@@ -4,7 +4,7 @@ import (
 	
 	"fmt"
 	"net"
-	"encoding/binary"
+	
 	"github.com/codecrafters-io/dns-server-starter-go/app/dns"
 
 )
@@ -40,21 +40,8 @@ func main() {
 			break
 		}
 	
-		// Extract header fields from the received DNS packet
-		id := binary.BigEndian.Uint16(buf[0:2])
-		opcode := (buf[2] >> 3) & 0x0F
-		rd := (buf[2] >> 0) & 0x01
-
-		fmt.Printf("Received %d bytes from %s: ID=%d OPCODE=%d RD=%d\n", size, source, id, opcode, rd)
-
-		// Prepare the DNS response message using the extracted fields
-		message := dns.PrepareMessage(id, 1, uint16(opcode), uint16(rd))
-
-		response := []byte{}
-		response = append(response, message.Header...)
-		response = append(response, message.Question...)
-		response = append(response, message.Answer...)
-
+		message := dns.ParseMessage(buf[:size])
+		response := dns.PrepareMessage(message)
 	
 		_, err = udpConn.WriteToUDP(response, source)
 		if err != nil {
