@@ -51,6 +51,7 @@ func main() {
 		response := []byte{}
 		response = append(response, (*message).Header...)
 		response = append(response, (*message).Question...)
+		response = append(response, (*message).Answer...)
 	
 		_, err = udpConn.WriteToUDP(response, source)
 		if err != nil {
