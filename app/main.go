@@ -43,17 +43,22 @@ func main() {
 		receivedData := string(buf[:size])
 		fmt.Printf("Received %d bytes from %s: %s\n", size, source, receivedData)
 	
-		// Create an empty response
-		// response := []byte{}
-		
-		message := dns.PrepareMessage()
-
-		response := []byte{}
-		response = append(response, (*message).Header...)
-		response = append(response, (*message).Question...)
-		response = append(response, (*message).Answer...)
 	
-		_, err = udpConn.WriteToUDP(response, source)
+		
+		// parsing the received message
+		message := dns.ParseMessage(buf[:size])
+
+		// preparing the response DNS message
+		response := dns.PrepareMessage(message)
+
+		// Combine Header and Question sections to create the response
+		finalResponse := []byte{}
+		finalResponse = append(finalResponse, response.Header...)
+		finalResponse = append(finalResponse, response.Question...)
+		finalResponse = append(finalResponse, response.Answer...)
+
+	
+		_, err = udpConn.WriteToUDP(finalResponse, source)
 		if err != nil {
 			fmt.Println("Failed to send response:", err)
 		}
