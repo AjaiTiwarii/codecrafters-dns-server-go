@@ -79,7 +79,7 @@ func PrepareMessage(request *Message) []byte {
 func (m *Message) SetHeader() {
 	binary.BigEndian.PutUint16(m.Header[0:2], m.ID)
 
-	flags := combineFlags(1, m.Opcode, 0, 0, m.RD, 0, 0, 0)
+	flags := combineFlags(1, m.Opcode, 0, 0, m.RD, 0, 0, m.Rcode)
 	binary.BigEndian.PutUint16(m.Header[2:4], flags)
 
 	binary.BigEndian.PutUint16(m.Header[4:6], 1) // QDCOUNT: 1 question
