@@ -6,6 +6,7 @@ import (
 	"strings"
 	"net"
 	"fmt"
+	"time"
 )
 
 // DNSMessage represents a complete DNS message.
@@ -223,6 +224,9 @@ func ForwardQuery(query []byte, resolver string) ([]byte, error) {
 	}
 	defer conn.Close()
 
+	// Set a longer timeout for reading the response
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+
 	// Parse the DNS packet to check the number of questions
 	numQuestions := binary.BigEndian.Uint16(query[4:6])
 	if numQuestions > 1 {
@@ -264,6 +268,9 @@ func handleMultipleQuestions(query []byte, resolver string) ([]byte, error) {
 			return nil, fmt.Errorf("failed to connect to resolver: %w", err)
 		}
 		defer conn.Close()
+
+		// Set a longer timeout for reading the response
+		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 
 		// Create a single-question query packet
 		singleQuestionQuery := createSingleQuestionQuery(query, i)
