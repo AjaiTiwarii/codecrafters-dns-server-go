@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/binary"
 	"strings"
+	"net"
+	"fmt"
 )
 
 // DNSMessage represents a complete DNS message.
@@ -206,4 +208,106 @@ func parseQuestions(serializedBuf []byte, numQues uint16) []DNSQuestion {
 		offset += len + 5
 	}
 	return questionList
+}
+
+// ForwardQuery forwards the DNS query to the specified resolver and returns the response.
+func ForwardQuery(query []byte, resolver string) ([]byte, error) {
+	udpAddr, err := net.ResolveUDPAddr("udp", resolver)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve resolver address: %w", err)
+	}
+
+	conn, err := net.DialUDP("udp", nil, udpAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to resolver: %w", err)
+	}
+	defer conn.Close()
+
+	// Parse the DNS packet to check the number of questions
+	numQuestions := binary.BigEndian.Uint16(query[4:6])
+	if numQuestions > 1 {
+		return handleMultipleQuestions(query, resolver)
+	}
+
+	// Send the query to the resolver
+	_, err = conn.Write(query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send query to resolver: %w", err)
+	}
+
+	// Read the response from the resolver
+	response := make([]byte, 512)
+	size, err := conn.Read(response)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response from resolver: %w", err)
+	}
+
+	// Mimic the packet identifier and return the response
+	copy(response[0:2], query[0:2])
+
+	return response[:size], nil
+}
+
+// handleMultipleQuestions splits a DNS query with multiple questions into multiple packets,
+// forwards them, and then merges the responses into one packet.
+func handleMultipleQuestions(query []byte, resolver string) ([]byte, error) {
+	var finalResponse []byte
+
+	udpAddr, err := net.ResolveUDPAddr("udp", resolver)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve resolver address: %w", err)
+	}
+
+	for i := 0; i < int(binary.BigEndian.Uint16(query[4:6])); i++ {
+		conn, err := net.DialUDP("udp", nil, udpAddr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to connect to resolver: %w", err)
+		}
+		defer conn.Close()
+
+		// Create a single-question query packet
+		singleQuestionQuery := createSingleQuestionQuery(query, i)
+
+		// Send the query to the resolver
+		_, err = conn.Write(singleQuestionQuery)
+		if err != nil {
+			return nil, fmt.Errorf("failed to send query to resolver: %w", err)
+		}
+
+		// Read the response from the resolver
+		response := make([]byte, 512)
+		size, err := conn.Read(response)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read response from resolver: %w", err)
+		}
+
+		// Mimic the packet identifier
+		copy(response[0:2], query[0:2])
+
+		// Append the answer section to the final response
+		finalResponse = append(finalResponse, response[12:size]...)
+	}
+
+	// Combine the original header, question section, and the merged answer sections
+	finalPacket := append(query[:12], finalResponse...)
+
+	return finalPacket, nil
+}
+
+// createSingleQuestionQuery creates a DNS query packet with a single question from the original multi-question packet.
+func createSingleQuestionQuery(query []byte, questionIndex int) []byte {
+	// The DNS header remains unchanged
+	header := query[:12]
+
+	// Extract the specific question section
+	questionStart := 12
+	for i := 0; i < questionIndex; i++ {
+		questionStart += len(query[questionStart:]) + 4
+	}
+
+	// Calculate the end of the question
+	questionEnd := questionStart + len(query[questionStart:]) + 4
+
+	// Return the packet with a single question
+	return append(header, query[questionStart:questionEnd]...)
 }
