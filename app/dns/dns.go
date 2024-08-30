@@ -4,8 +4,8 @@ import "encoding/binary"
 
 type Message struct {
 	Header   []byte
-	Question []byte
-	Answer   []byte
+	Questions [][]byte
+	Answers  [][]byte
 	RD       uint16
 	Opcode   uint16
 	ID       uint16
@@ -15,8 +15,8 @@ type Message struct {
 func NewMessage() *Message {
 	return &Message{
 		Header:   make([]byte, 12),
-		Question: []byte{},
-		Answer:   []byte{},
+		Questions: [][]byte{},
+		Answers:  [][]byte{},
 	}
 }
 
@@ -45,22 +45,43 @@ func ParseMessage(request []byte) *Message {
 	offset := 12
 	if qdCount > 0 {
 		for i := 0; i < int(qdCount); i++ {
-			// Assuming only one question section and copying it directly
-			nameEnd := offset
-			for request[nameEnd] != 0 {
-				nameEnd++
-			}
-			nameEnd++ // Include the null byte
-
-			message.Question = append(message.Question, request[offset:nameEnd]...)
-			message.Question = binary.BigEndian.AppendUint16(message.Question, 1) // Type A
-			message.Question = binary.BigEndian.AppendUint16(message.Question, 1) // Class IN
-			offset = nameEnd + 4
+			question, newOffset := parseQuestion(request, offset)
+			message.Questions = append(message.Questions, question)
+			offset = newOffset
 		}
 	}
 
 	return message
 }
+
+func parseQuestion(request []byte, offset int) ([]byte, int) {
+	question := []byte{}
+	startOffset := offset
+	for {
+		labelLength := int(request[offset])
+		if labelLength == 0 {
+			offset++
+			break
+		}
+
+		if (labelLength & 0xC0) == 0xC0 { // Check if it's a pointer
+			pointerOffset := int(binary.BigEndian.Uint16(request[offset:offset+2]) & 0x3FFF)
+			compressedPart, _ := parseQuestion(request, pointerOffset)
+			question = append(question, compressedPart...)
+			offset += 2
+			break
+		} else {
+			offset++
+			question = append(question, request[startOffset:offset+labelLength]...)
+			offset += labelLength
+		}
+	}
+	
+	// Append Type and Class fields
+	question = append(question, request[offset:offset+4]...)
+	return question, offset + 4
+}
+
 
 func PrepareMessage(request *Message) []byte {
 	response := NewMessage()
@@ -69,40 +90,50 @@ func PrepareMessage(request *Message) []byte {
 	response.Opcode = request.Opcode
 	response.Rcode = request.Rcode
 
-	response.SetHeader()
-	response.SetQuestion(request.Question)
-	response.SetAnswer(request.Question)
+	response.SetHeader(len(request.Questions))
+	response.SetQuestions(request.Questions)
+	response.SetAnswers(request.Questions)
 
-	return append(response.Header, append(response.Question, response.Answer...)...)
+	return append(response.Header, flatten(append(response.Questions, response.Answers...))...)
 }
 
-func (m *Message) SetHeader() {
+func (m *Message) SetHeader(qdCount int) {
 	binary.BigEndian.PutUint16(m.Header[0:2], m.ID)
 
 	flags := combineFlags(1, m.Opcode, 0, 0, m.RD, 0, 0, m.Rcode)
 	binary.BigEndian.PutUint16(m.Header[2:4], flags)
 
-	binary.BigEndian.PutUint16(m.Header[4:6], 1) // QDCOUNT: 1 question
-	binary.BigEndian.PutUint16(m.Header[6:8], 1) // ANCOUNT: 1 answer
-	binary.BigEndian.PutUint16(m.Header[8:10], 0) // NSCOUNT
-	binary.BigEndian.PutUint16(m.Header[10:12], 0) // ARCOUNT
+	binary.BigEndian.PutUint16(m.Header[4:6], uint16(qdCount)) // QDCOUNT: number of questions
+	binary.BigEndian.PutUint16(m.Header[6:8], uint16(qdCount)) // ANCOUNT: number of answers
+	binary.BigEndian.PutUint16(m.Header[8:10], 0)              // NSCOUNT
+	binary.BigEndian.PutUint16(m.Header[10:12], 0)             // ARCOUNT
 }
 
-func (m *Message) SetQuestion(question []byte) {
-	m.Question = question
+func (m *Message) SetQuestions(questions [][]byte) {
+	m.Questions = questions
 }
 
-func (m *Message) SetAnswer(question []byte) {
-	answer := []byte{}
-	answer = append(answer, question...)
+func (m *Message) SetAnswers(questions [][]byte) {
+	for _, question := range questions {
+		answer := []byte{}
+		answer = append(answer, question...)
 
-	answer = binary.BigEndian.AppendUint16(answer, 1) // Type A
-	answer = binary.BigEndian.AppendUint16(answer, 1) // Class IN
-	answer = binary.BigEndian.AppendUint32(answer, 60) // TTL: 60 seconds
-	answer = binary.BigEndian.AppendUint16(answer, 4)  // RDLENGTH: 4 bytes
-	answer = binary.BigEndian.AppendUint32(answer, binary.BigEndian.Uint32([]byte("\x08\x08\x08\x08"))) // RDATA: 8.8.8.8
+		answer = binary.BigEndian.AppendUint16(answer, 1) // Type A
+		answer = binary.BigEndian.AppendUint16(answer, 1) // Class IN
+		answer = binary.BigEndian.AppendUint32(answer, 60) // TTL: 60 seconds
+		answer = binary.BigEndian.AppendUint16(answer, 4)  // RDLENGTH: 4 bytes
+		answer = binary.BigEndian.AppendUint32(answer, binary.BigEndian.Uint32([]byte("\x08\x08\x08\x08"))) // RDATA: 8.8.8.8
 
-	m.Answer = answer
+		m.Answers = append(m.Answers, answer)
+	}
+}
+
+func flatten(sections [][]byte) []byte {
+	var result []byte
+	for _, section := range sections {
+		result = append(result, section...)
+	}
+	return result
 }
 
 func combineFlags(qr, opcode, aa, tc, rd, ra, z, rcode uint16) uint16 {
