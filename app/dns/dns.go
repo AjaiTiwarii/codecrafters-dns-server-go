@@ -214,7 +214,7 @@ func Handle(resolver *net.Resolver, req *DNSMessage) (*DNSMessage, error) {
 	flag := NewDNSFlag()
 	flag.SetQR(1)
 	flag.SetOpcode(req.hdr.flags.Opcode())
-	
+
 	fmt.Println(req.hdr.flags.RD())
 	flag.SetRD(req.hdr.flags.RD())
 	if req.hdr.flags.Opcode() != 0 {
@@ -222,17 +222,18 @@ func Handle(resolver *net.Resolver, req *DNSMessage) (*DNSMessage, error) {
 	}
 	fmt.Printf("%08b", flag[0])
 	fmt.Printf("%08b", flag[1])
-	
+
 	var rrs []*ResourceRecord
 	for _, q := range req.qs {
 		if resolver == nil {
+			// Set the default IP address to 127.0.0.1
 			rrs = append(rrs, &ResourceRecord{
 				name:  q.labels,
 				typ:   1,
 				class: 1,
 				ttl:   60,
 				rdlen: 4,
-				rdata: []byte{byte(8), byte(8), byte(8), byte(8)},
+				rdata: []byte{127, 0, 0, 1},  // Ensure correct IP address here
 			})
 			continue
 		}
@@ -241,14 +242,16 @@ func Handle(resolver *net.Resolver, req *DNSMessage) (*DNSMessage, error) {
 			return nil, fmt.Errorf("fail to lookup: %w", err)
 		}
 		for _, ip := range ips {
-			rrs = append(rrs, &ResourceRecord{
-				name:  q.labels,
-				typ:   1,
-				class: 1,
-				ttl:   60,
-				rdlen: 4,
-				rdata: []byte(ip.IP),
-			})
+			if ip.IP.To4() != nil {  // Ensure it's an IPv4 address
+				rrs = append(rrs, &ResourceRecord{
+					name:  q.labels,
+					typ:   1,
+					class: 1,
+					ttl:   60,
+					rdlen: 4,
+					rdata: ip.IP.To4(),  // Use To4() to convert to 4-byte IPv4 address
+				})
+			}
 		}
 	}
 	m := &DNSMessage{
