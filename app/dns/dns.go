@@ -1,22 +1,25 @@
 package dns
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+	"net"
+)
 
 type Message struct {
-	Header   []byte
+	Header    []byte
 	Questions [][]byte
-	Answers  [][]byte
-	RD       uint16
-	Opcode   uint16
-	ID       uint16
-	Rcode    uint16
+	Answers   [][]byte
+	RD        uint16
+	Opcode    uint16
+	ID        uint16
+	Rcode     uint16
 }
 
 func NewMessage() *Message {
 	return &Message{
-		Header:   make([]byte, 12),
+		Header:    make([]byte, 12),
 		Questions: [][]byte{},
-		Answers:  [][]byte{},
+		Answers:   [][]byte{},
 	}
 }
 
@@ -40,15 +43,13 @@ func ParseMessage(request []byte) *Message {
 		message.Rcode = 4 // Not implemented for other Opcodes
 	}
 
-	// Copy the question section
+	// Copy the question section, handling compressed labels
 	qdCount := binary.BigEndian.Uint16(request[4:6])
 	offset := 12
-	if qdCount > 0 {
-		for i := 0; i < int(qdCount); i++ {
-			question, newOffset := parseQuestion(request, offset)
-			message.Questions = append(message.Questions, question)
-			offset = newOffset
-		}
+	for i := 0; i < int(qdCount); i++ {
+		question, newOffset := parseQuestion(request, offset)
+		message.Questions = append(message.Questions, question)
+		offset = newOffset
 	}
 
 	return message
@@ -56,7 +57,6 @@ func ParseMessage(request []byte) *Message {
 
 func parseQuestion(request []byte, offset int) ([]byte, int) {
 	question := []byte{}
-	startOffset := offset
 	for {
 		labelLength := int(request[offset])
 		if labelLength == 0 {
@@ -72,7 +72,7 @@ func parseQuestion(request []byte, offset int) ([]byte, int) {
 			break
 		} else {
 			offset++
-			question = append(question, request[startOffset:offset+labelLength]...)
+			question = append(question, request[offset-labelLength-1:offset]...)
 			offset += labelLength
 		}
 	}
@@ -81,7 +81,6 @@ func parseQuestion(request []byte, offset int) ([]byte, int) {
 	question = append(question, request[offset:offset+4]...)
 	return question, offset + 4
 }
-
 
 func PrepareMessage(request *Message) []byte {
 	response := NewMessage()
@@ -122,7 +121,12 @@ func (m *Message) SetAnswers(questions [][]byte) {
 		answer = binary.BigEndian.AppendUint16(answer, 1) // Class IN
 		answer = binary.BigEndian.AppendUint32(answer, 60) // TTL: 60 seconds
 		answer = binary.BigEndian.AppendUint16(answer, 4)  // RDLENGTH: 4 bytes
-		answer = binary.BigEndian.AppendUint32(answer, binary.BigEndian.Uint32([]byte("\x08\x08\x08\x08"))) // RDATA: 8.8.8.8
+
+		// Set RDATA to an IP address (e.g., 192.168.0.1)
+		ip := net.ParseIP("192.168.0.1").To4()
+		if ip != nil {
+			answer = append(answer, ip...)
+		}
 
 		m.Answers = append(m.Answers, answer)
 	}
